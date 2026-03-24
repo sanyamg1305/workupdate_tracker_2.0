@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import {
     ProjectTask,
@@ -11,43 +10,37 @@ import {
     FolderVisibility
 } from '../types';
 import { storageService } from '../services/storageService';
-import { Icons, ACCENT_COLOR } from '../constants';
+import { Icons } from '../constants';
 
 interface TaskSystemProps {
     user: User;
     users: User[];
+    folders?: TaskFolder[];
+    activeFolderId?: string | null;
+    view?: 'MY_TASKS' | 'FOLDER' | 'ADMIN';
+    onRefreshFolders?: () => void;
 }
 
-const TaskSystem: React.FC<TaskSystemProps> = ({ user, users }) => {
+const TaskSystem: React.FC<TaskSystemProps> = ({ user, users, folders = [], activeFolderId, view = 'MY_TASKS', onRefreshFolders }) => {
     const [tasks, setTasks] = useState<ProjectTask[]>([]);
-    const [folders, setFolders] = useState<TaskFolder[]>([]);
-    const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
-    const [view, setView] = useState<'MY_TASKS' | 'FOLDER' | 'ADMIN'>('MY_TASKS');
     const [isLoading, setIsLoading] = useState(true);
     const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-    const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
-    const [showCompleted, setShowCompleted] = useState(false);
+    const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
     useEffect(() => {
         fetchData();
-    }, [user, view]);
+    }, [user, view, activeFolderId]);
 
-    const fetchData = async (silent: boolean | React.ChangeEvent<any> | React.MouseEvent<any> = false) => {
-        const isSilent = silent === true;
-        if (!isSilent) setIsLoading(true);
+    const fetchData = async (silent: boolean = false) => {
+        if (!silent) setIsLoading(true);
 
-        // Safety timeout to ensure loading screen always disappears after 5 seconds
         const timeoutId = setTimeout(() => {
-            if (!isSilent) setIsLoading(false);
-            console.warn("Task fetch timed out - forcing loading to false");
+            if (!silent) setIsLoading(false);
         }, 5000);
 
         try {
             const isAdmin = user.role === UserRole.ADMIN;
-            const fetchedFolders = await storageService.getFolders(user.id, isAdmin);
-            setFolders(fetchedFolders || []);
-
             let fetchedTasks: ProjectTask[] = [];
             if (view === 'ADMIN' && isAdmin) {
                 fetchedTasks = await storageService.getTasks();
@@ -58,192 +51,98 @@ const TaskSystem: React.FC<TaskSystemProps> = ({ user, users }) => {
         } catch (error) {
             console.error("Error fetching task data:", error);
             setTasks([]);
-            setFolders([]);
         } finally {
             clearTimeout(timeoutId);
-            if (!isSilent) setIsLoading(false);
+            if (!silent) setIsLoading(false);
         }
     };
 
     const filteredTasks = (tasks || []).filter(task => {
         if (activeFolderId === 'UNASSIGNED') return !task.folderId && ((task.assignedUserIds || []).includes(user.id) || (task.collaboratorIds || []).includes(user.id));
         if (activeFolderId) return task.folderId === activeFolderId;
-        if (view === 'MY_TASKS') return (task.assignedUserIds || []).includes(user.id) || (task.collaboratorIds || []).includes(user.id);
-        return true; // Admin view or all tasks
+        if (view === 'MY_TASKS' && !activeFolderId) return (task.assignedUserIds || []).includes(user.id) || (task.collaboratorIds || []).includes(user.id);
+        return true; 
     });
 
     const activeTasks = filteredTasks.filter(t => t.status !== ProjectTaskStatus.COMPLETED);
     const completedTasks = filteredTasks.filter(t => t.status === ProjectTaskStatus.COMPLETED);
 
     return (
-        <div className="flex flex-col md:flex-row h-auto md:h-[calc(100vh-12rem)] bg-bg border border-border overflow-hidden">
-            {/* Sidebar - Folders (Desktop) */}
-            <div className="hidden md:flex w-64 border-r border-border flex-col">
-                <div className="p-4 border-b border-border flex justify-between items-center">
-                    <h3 className="text-[10px] uppercase font-black tracking-widest text-gray-500">Folders</h3>
-                    <button
-                        onClick={() => setIsFolderModalOpen(true)}
-                        className="text-accent hover:text-white transition-colors"
-                    >
-                        <Icons.Plus />
-                    </button>
+        <div className="flex-1 flex flex-col h-full overflow-hidden bg-bg">
+            {/* Header */}
+            <div className="p-6 border-b border-border flex justify-between items-center bg-bg sticky top-0 z-10">
+                <div>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-white flex items-center gap-2">
+                        {activeFolderId === 'UNASSIGNED' ? 'Unassigned Tasks' : (activeFolderId ? folders.find(f => f.id === activeFolderId)?.name : (view === 'ADMIN' ? 'All Tasks' : 'My Tasks'))}
+                    </h2>
+                    <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-1">
+                        {filteredTasks.length} {filteredTasks.length === 1 ? 'Task' : 'Tasks'} Total
+                    </p>
                 </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                    <button
-                        onClick={() => { setActiveFolderId(null); setView('MY_TASKS'); }}
-                        className={`w-full text-left px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors ${!activeFolderId && view === 'MY_TASKS' ? 'bg-accent text-black' : 'text-gray-400 hover:bg-muted'}`}
-                    >
-                        My Tasks
-                    </button>
-                    {user.role === UserRole.ADMIN && (
-                        <button
-                            onClick={() => { setActiveFolderId(null); setView('ADMIN'); }}
-                            className={`w-full text-left px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors ${!activeFolderId && view === 'ADMIN' ? 'bg-accent text-black' : 'text-gray-400 hover:bg-muted'}`}
-                        >
-                            Admin Overview
-                        </button>
-                    )}
-                    <button
-                        onClick={() => { setActiveFolderId('UNASSIGNED'); setView('FOLDER'); }}
-                        className={`w-full text-left px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-between ${activeFolderId === 'UNASSIGNED' ? 'bg-white text-black' : 'text-gray-400 hover:bg-muted'}`}
-                    >
-                        <span>Unassigned Tasks</span>
-                    </button>
-                    <div className="my-4 border-t border-border/50 mx-2" />
-                    {folders.map(folder => (
-                        <button
-                            key={folder.id}
-                            onClick={() => { setActiveFolderId(folder.id); setView('FOLDER'); }}
-                            className={`w-full text-left px-3 py-2 text-xs font-bold uppercase tracking-wider transition-colors flex items-center justify-between ${activeFolderId === folder.id ? 'bg-white text-black' : 'text-gray-400 hover:bg-muted'}`}
-                        >
-                            <span>{folder.name}</span>
-                            {folder.visibility === FolderVisibility.PRIVATE && <Icons.Shield />}
-                        </button>
-                    ))}
-                </div>
+                <button
+                    onClick={() => { setEditingTask(null); setIsTaskModalOpen(true); }}
+                    className="bg-accent text-black px-4 py-2 text-xs font-black uppercase tracking-widest hover:bg-white transition-colors flex items-center gap-2 rounded-sm"
+                >
+                    <Icons.Plus className="w-4 h-4" /> New Task
+                </button>
             </div>
 
-            {/* Mobile Horizontal Folder Navigation */}
-            <div className="md:hidden border-b border-border bg-muted/30 px-2 py-3">
-                <div className="flex items-center justify-between mb-3 px-2">
-                    <h3 className="text-[8px] uppercase font-black tracking-[0.2em] text-gray-500">Navigation</h3>
-                    <button
-                        onClick={() => setIsFolderModalOpen(true)}
-                        className="text-accent text-xs p-1"
-                    >
-                        <Icons.Plus />
-                    </button>
-                </div>
-                <div className="flex overflow-x-auto pb-2 -mx-2 px-2 space-x-2 no-scrollbar scroll-smooth">
-                    <button
-                        onClick={() => { setActiveFolderId(null); setView('MY_TASKS'); }}
-                        className={`whitespace-nowrap px-4 py-2 text-[10px] font-black uppercase tracking-widest border transition-all ${!activeFolderId && view === 'MY_TASKS' ? 'bg-accent border-accent text-black' : 'border-border text-gray-400'}`}
-                    >
-                        My Tasks
-                    </button>
-                    {user.role === UserRole.ADMIN && (
-                        <button
-                            onClick={() => { setActiveFolderId(null); setView('ADMIN'); }}
-                            className={`whitespace-nowrap px-4 py-2 text-[10px] font-black uppercase tracking-widest border transition-all ${!activeFolderId && view === 'ADMIN' ? 'bg-white border-white text-black' : 'border-border text-gray-400'}`}
-                        >
-                            Admin
-                        </button>
-                    )}
-                    <button
-                        onClick={() => { setActiveFolderId('UNASSIGNED'); setView('FOLDER'); }}
-                        className={`whitespace-nowrap px-4 py-2 text-[10px] font-black uppercase tracking-widest border transition-all ${activeFolderId === 'UNASSIGNED' && view === 'FOLDER' ? 'bg-white border-white text-black' : 'border-border text-gray-400'}`}
-                    >
-                        Unassigned
-                    </button>
-                    {folders.map(folder => (
-                        <button
-                            key={folder.id}
-                            onClick={() => { setActiveFolderId(folder.id); setView('FOLDER'); }}
-                            className={`whitespace-nowrap px-4 py-2 text-[10px] font-black uppercase tracking-widest border transition-all flex items-center gap-2 ${activeFolderId === folder.id ? 'bg-white border-white text-black' : 'border-border text-gray-400'}`}
-                        >
-                            {folder.name}
-                            {folder.visibility === FolderVisibility.PRIVATE && <Icons.Shield className="w-3 h-3" />}
-                        </button>
-                    ))}
-                </div>
+            {/* List Header */}
+            <div className="grid grid-cols-[1fr_120px_150px_100px_120px_60px] gap-4 px-6 py-3 border-b border-border bg-muted/30 text-[10px] uppercase font-black tracking-widest text-gray-400 sticky top-[81px] z-10">
+                <div className="pl-8">Task Name</div>
+                <div>Status</div>
+                <div>Assignee</div>
+                <div>Due Date</div>
+                <div>Priority</div>
+                <div className="text-right">Est.</div>
             </div>
 
-            {/* Main Content - Task List */}
-            <div className="flex-1 flex flex-col overflow-hidden">
-                <div className="p-6 border-b border-border flex justify-between items-center">
-                    <div>
-                        <h2 className="text-2xl font-black uppercase tracking-tight">
-                            {activeFolderId === 'UNASSIGNED' ? 'Unassigned Tasks' : (activeFolderId ? folders.find(f => f.id === activeFolderId)?.name : (view === 'ADMIN' ? 'All Tasks' : 'My Assigned Tasks'))}
-                        </h2>
-                        <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-1">
-                            {filteredTasks.length} {filteredTasks.length === 1 ? 'Task' : 'Tasks'} Total
-                        </p>
+            {/* List Body */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar pb-20">
+                {isLoading ? (
+                    <div className="flex items-center justify-center p-12">
+                        <p className="text-[10px] uppercase font-bold tracking-[0.3em] text-gray-500 animate-pulse">Loading Tasks...</p>
                     </div>
-                    <button
-                        onClick={() => { setEditingTask(null); setIsTaskModalOpen(true); }}
-                        className="bg-accent text-black px-6 py-2 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white transition-colors flex items-center"
-                    >
-                        <Icons.Plus /> <span className="ml-2">Create Task</span>
-                    </button>
-                </div>
+                ) : filteredTasks.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center p-20 border-b border-dashed border-border/50">
+                        <p className="text-gray-500 uppercase tracking-widest text-xs font-bold">No tasks found here.</p>
+                    </div>
+                ) : (
+                    <div>
+                        {activeTasks.map(task => (
+                            <TaskRow
+                                key={task.id}
+                                task={task}
+                                user={user}
+                                users={users}
+                                onEdit={() => { setEditingTask(task); setIsTaskModalOpen(true); }}
+                                onRefresh={(silent) => fetchData(silent === true)}
+                                expanded={expandedTaskId === task.id}
+                                onToggleExpand={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
+                            />
+                        ))}
 
-                <div className="flex-1 overflow-y-auto p-6">
-                    {isLoading ? (
-                        <div className="flex items-center justify-center h-full">
-                            <p className="text-[10px] uppercase font-bold tracking-[0.3em] text-gray-500 animate-pulse">Loading Tasks...</p>
-                        </div>
-                    ) : filteredTasks.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full border-2 border-dashed border-border py-20">
-                            <p className="text-gray-500 uppercase tracking-widest text-xs font-bold">No tasks found here.</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-8">
-                            {/* Active Tasks Section */}
-                            <div className="space-y-4">
-                                {activeTasks.map(task => (
-                                    <TaskCard
+                        {completedTasks.length > 0 && (
+                            <div className="mt-8">
+                                <div className="px-6 py-3 bg-muted/20 border-y border-border flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-gray-500">
+                                    <Icons.Check className="w-3 h-3" /> Completed Tasks ({completedTasks.length})
+                                </div>
+                                {completedTasks.map(task => (
+                                    <TaskRow
                                         key={task.id}
                                         task={task}
                                         user={user}
                                         users={users}
                                         onEdit={() => { setEditingTask(task); setIsTaskModalOpen(true); }}
-                                        onRefresh={(silent: boolean) => fetchData(silent === true)}
+                                        onRefresh={(silent) => fetchData(silent === true)}
+                                        expanded={expandedTaskId === task.id}
+                                        onToggleExpand={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
                                     />
                                 ))}
                             </div>
-
-                            {/* Completed Tasks Section */}
-                            {completedTasks.length > 0 && (
-                                <div className="pt-8 border-t border-border/30">
-                                    <button
-                                        onClick={() => setShowCompleted(!showCompleted)}
-                                        className="flex items-center gap-3 text-[10px] font-black uppercase tracking-[0.3em] text-gray-500 hover:text-accent transition-colors mb-6"
-                                    >
-                                        <div className={`transition-transform ${showCompleted ? 'rotate-90' : ''}`}>
-                                            <Icons.ChevronRight />
-                                        </div>
-                                        Completed Tasks ({completedTasks.length})
-                                    </button>
-
-                                    {showCompleted && (
-                                        <div className="space-y-4 opacity-70">
-                                            {completedTasks.map(task => (
-                                                <TaskCard
-                                                    key={task.id}
-                                                    task={task}
-                                                    user={user}
-                                                    users={users}
-                                                    onEdit={() => { setEditingTask(task); setIsTaskModalOpen(true); }}
-                                                    onRefresh={(silent: boolean) => fetchData(silent === true)}
-                                                />
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
+                        )}
+                    </div>
+                )}
             </div>
 
             {/* Task Creation Modal */}
@@ -268,33 +167,178 @@ const TaskSystem: React.FC<TaskSystemProps> = ({ user, users }) => {
                     folders={folders}
                 />
             )}
+        </div>
+    );
+};
 
-            {/* Folder Creation Modal */}
-            {isFolderModalOpen && (
-                <FolderModal
-                    isOpen={isFolderModalOpen}
-                    onClose={() => setIsFolderModalOpen(false)}
-                    onSave={async (folderData) => {
-                        const folderId = Math.random().toString(36).substr(2, 9);
-                        await storageService.saveFolder({
-                            ...folderData,
-                            id: folderId,
-                            ownerId: user.id,
-                            type: user.role === UserRole.ADMIN ? FolderType.ADMIN : FolderType.USER,
-                            createdAt: new Date().toISOString()
-                        } as TaskFolder);
-                        setIsFolderModalOpen(false);
-                        fetchData(true);
-                    }}
-                    users={users}
-                    isAdmin={user.role === UserRole.ADMIN}
-                />
+const TaskRow = ({ task, user, users, onEdit, onRefresh, expanded, onToggleExpand }: any) => {
+    const isCompleted = task.status === ProjectTaskStatus.COMPLETED;
+    const [subtaskTitle, setSubtaskTitle] = useState('');
+
+    const toggleComplete = async () => {
+        const newStatus = isCompleted ? ProjectTaskStatus.IN_PROGRESS : ProjectTaskStatus.COMPLETED;
+        await storageService.saveTask({ ...task, status: newStatus });
+        onRefresh(true);
+    };
+
+    return (
+        <div className="border-b border-border/50 group hover:bg-muted/10 transition-colors">
+            {/* Main Row */}
+            <div className="grid grid-cols-[1fr_120px_150px_100px_120px_60px] gap-4 px-6 py-3 items-center cursor-pointer" onClick={onToggleExpand}>
+                {/* Task Name & Completion */}
+                <div className="flex items-center gap-3 min-w-0 pr-4">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); toggleComplete(); }}
+                        className={`flex-shrink-0 w-4 h-4 rounded-sm border flex items-center justify-center transition-all ${isCompleted ? 'bg-accent border-accent text-black' : 'border-gray-600 hover:border-accent block text-transparent'}`}
+                    >
+                        <Icons.Check className="w-3 h-3" />
+                    </button>
+                    <div className="flex-1 min-w-0 flex flex-col">
+                        <span className={`text-sm font-bold truncate transition-colors ${isCompleted ? 'line-through text-gray-500' : 'text-white group-hover:text-accent'}`}>{task.title || 'Untitled'}</span>
+                        {task.client && (
+                             <span className="text-[9px] uppercase tracking-widest text-gray-500 font-bold truncate">{task.client}</span>
+                        )}
+                    </div>
+                </div>
+
+                {/* Status Dropdown */}
+                <div onClick={e => e.stopPropagation()}>
+                    <select
+                        value={task.status}
+                        onChange={(e) => {
+                            storageService.saveTask({ ...task, status: e.target.value as ProjectTaskStatus }).then(() => onRefresh(true));
+                        }}
+                        className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-sm border outline-none appearance-none cursor-pointer text-center w-full
+                            ${task.status === ProjectTaskStatus.COMPLETED ? 'bg-green-500/10 border-green-500/30 text-green-500' :
+                              task.status === ProjectTaskStatus.IN_PROGRESS ? 'bg-blue-500/10 border-blue-500/30 text-blue-500' : 
+                              'bg-gray-500/10 border-gray-500/30 text-gray-400'
+                            }
+                        `}
+                    >
+                        <option value={ProjectTaskStatus.NOT_STARTED}>To Do</option>
+                        <option value={ProjectTaskStatus.IN_PROGRESS}>In Progress</option>
+                        <option value={ProjectTaskStatus.COMPLETED}>Done</option>
+                    </select>
+                </div>
+
+                {/* Assignees */}
+                <div className="flex items-center -space-x-1">
+                    {(task.assignedUserIds || []).slice(0, 3).map((aid: any) => (
+                        <div key={aid} title={users.find((u: any) => u.id === aid)?.name} className="w-6 h-6 rounded-full bg-muted border border-border flex items-center justify-center text-[9px] font-black text-white relative z-10 shadow-sm">
+                            {users.find((u: any) => u.id === aid)?.name?.charAt(0) || '?'}
+                        </div>
+                    ))}
+                    {(task.assignedUserIds?.length > 3) && (
+                        <div className="w-6 h-6 rounded-full bg-bg border border-border flex items-center justify-center text-[9px] font-black text-gray-500 relative z-10">
+                            +{task.assignedUserIds.length - 3}
+                        </div>
+                    )}
+                </div>
+
+                {/* Due Date */}
+                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
+                    <Icons.Calendar className="w-3 h-3 text-gray-600" />
+                    {task.endDate ? new Date(task.endDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '-'}
+                </div>
+
+                {/* Priority */}
+                <div>
+                     <span className={`text-[8px] font-black px-2 py-1 uppercase tracking-widest rounded-sm border ${
+                            task.priority === ProjectTaskPriority.HIGH ? 'bg-red-500/10 border-red-500/30 text-red-500' :
+                            task.priority === ProjectTaskPriority.MEDIUM ? 'bg-accent/10 border-accent/30 text-accent' :
+                            'bg-gray-500/10 border-gray-500/30 text-gray-500'
+                     }`}>
+                        {task.priority === ProjectTaskPriority.HIGH ? 'Urgent' : task.priority === ProjectTaskPriority.MEDIUM ? 'Normal' : 'Low'}
+                     </span>
+                </div>
+
+                {/* Estimates */}
+                <div className="text-[10px] font-black text-gray-500 text-right">
+                    {task.timeEstimate ? `${task.timeEstimate}h` : '-'}
+                </div>
+            </div>
+
+            {/* Expanded Detail View */}
+            {expanded && (
+                <div className="pl-[3.25rem] pr-6 pb-6 pt-2 bg-muted/5 border-t border-border/30">
+                     <div className="flex items-start justify-between gap-8">
+                         <div className="flex-1 max-w-3xl">
+                             <p className="text-xs text-gray-400 leading-relaxed mb-6 whitespace-pre-wrap">{task.description || 'No description provided.'}</p>
+                             
+                             {/* Subtasks */}
+                             <div className="space-y-3">
+                                 <h5 className="text-[10px] uppercase font-black tracking-widest text-gray-500 flex items-center gap-2">
+                                     <Icons.List className="w-3 h-3" /> Subtasks ({task.subtasks?.length || 0})
+                                 </h5>
+                                 
+                                 {task.subtasks?.map((sub: any) => (
+                                     <div key={sub.id} className="flex items-center gap-3 group/sub">
+                                         <button
+                                             onClick={async () => {
+                                                 const updated = task.subtasks.map((s: any) => s.id === sub.id ? { ...s, isCompleted: !s.isCompleted } : s);
+                                                 await storageService.saveTask({ ...task, subtasks: updated });
+                                                 onRefresh(true);
+                                             }}
+                                             className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${sub.isCompleted ? 'bg-accent border-accent text-black' : 'border-gray-600 hover:border-accent text-transparent'}`}
+                                         >
+                                             <Icons.Check className="w-2.5 h-2.5" />
+                                         </button>
+                                         <span className={`text-xs font-bold transition-colors ${sub.isCompleted ? 'text-gray-600 line-through' : 'text-gray-300'}`}>{sub.title}</span>
+                                     </div>
+                                 ))}
+
+                                 {/* Add subtask inline */}
+                                 <div className="flex items-center gap-3 mt-2">
+                                     <div className="w-3.5 h-3.5 rounded-sm border border-border border-dashed flex items-center justify-center text-gray-600">
+                                         <Icons.Plus className="w-2.5 h-2.5" />
+                                     </div>
+                                     <input
+                                         type="text"
+                                         value={subtaskTitle}
+                                         onChange={e => setSubtaskTitle(e.target.value)}
+                                         placeholder="Add subtask..."
+                                         className="bg-transparent border-none outline-none text-xs text-white font-bold placeholder-gray-600 flex-1"
+                                         onKeyDown={async (e) => {
+                                             if (e.key === 'Enter' && subtaskTitle.trim()) {
+                                                 const newSub = { id: Math.random().toString(36).substr(2, 9), title: subtaskTitle.trim(), isCompleted: false };
+                                                 await storageService.saveTask({ ...task, subtasks: [...(task.subtasks || []), newSub] });
+                                                 setSubtaskTitle('');
+                                                 onRefresh(true);
+                                             }
+                                         }}
+                                     />
+                                 </div>
+                             </div>
+                         </div>
+
+                         {/* Action Buttons */}
+                         <div className="flex flex-col gap-2 min-w-[140px]">
+                             <button
+                                 onClick={onEdit}
+                                 className="w-full text-left px-3 py-2 text-[10px] font-black uppercase tracking-widest text-white bg-muted border border-border flex items-center gap-2 hover:bg-accent hover:text-black hover:border-accent transition-colors rounded-sm"
+                             >
+                                 <Icons.Settings className="w-3 h-3" /> Edit Task
+                             </button>
+                             <button
+                                 onClick={async () => {
+                                     if (window.confirm("Permanently delete this task?")) {
+                                         await storageService.deleteTask(task.id);
+                                         onRefresh(true);
+                                     }
+                                 }}
+                                 className="w-full text-left px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-400 bg-muted/50 border border-border flex items-center gap-2 hover:bg-red-500/10 hover:text-red-500 transition-colors rounded-sm"
+                             >
+                                 <Icons.Trash className="w-3 h-3" /> Delete Task
+                             </button>
+                         </div>
+                     </div>
+                </div>
             )}
         </div>
     );
 };
 
-// Simplified Internal Modals for speed/cohesion
+// Simplified Task Modal adapted for styling
 const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData, activeFolderId, folders = [] }: any) => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
@@ -318,11 +362,13 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
     return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
             <div className="bg-bg border border-border w-full max-w-2xl flex flex-col max-h-[90vh]">
-                <div className="p-6 border-b border-border flex justify-between items-center">
-                    <h3 className="text-xl font-black uppercase text-white">{initialData ? 'Edit Task' : 'New Strategic Task'}</h3>
-                    <button onClick={onClose} className="text-gray-500 hover:text-white"><Icons.X /></button>
+                <div className="p-6 border-b border-border flex justify-between items-center bg-muted/30">
+                    <h3 className="text-xl font-black uppercase tracking-tight text-white">{initialData ? 'Edit Task Specification' : 'New Task Specification'}</h3>
+                    <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors"><Icons.X /></button>
                 </div>
-                <div className="flex-1 overflow-y-auto p-8 space-y-6">
+                
+                <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
+                    {/* ... Same modal forms as previous but fully themed ... */}
                     <div className="grid grid-cols-2 gap-6">
                         <div className="col-span-2">
                             <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Task Title</label>
@@ -330,8 +376,8 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                                 type="text"
                                 value={formData.title}
                                 onChange={e => setFormData({ ...formData, title: e.target.value })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold"
-                                placeholder="E.G. Q1 FINANCIAL AUDIT"
+                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold rounded-sm"
+                                placeholder="E.g. Database Migration"
                             />
                         </div>
                         <div className="col-span-2">
@@ -339,24 +385,26 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                             <textarea
                                 value={formData.description}
                                 onChange={e => setFormData({ ...formData, description: e.target.value })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent h-24 resize-none"
+                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent h-24 resize-none rounded-sm"
+                                placeholder="Provide detailed context..."
                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Client Name</label>
+                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Client / Project Code</label>
                             <input
                                 type="text"
                                 value={formData.client}
                                 onChange={e => setFormData({ ...formData, client: e.target.value })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase"
+                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase rounded-sm"
+                                placeholder="INT-001"
                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Folder</label>
+                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Space / Folder</label>
                             <select
                                 value={formData.folderId || 'UNASSIGNED'}
                                 onChange={e => setFormData({ ...formData, folderId: e.target.value === 'UNASSIGNED' ? null : e.target.value })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase"
+                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase rounded-sm appearance-none cursor-pointer"
                             >
                                 <option value="UNASSIGNED">-- Unassigned --</option>
                                 {folders.map((f: any) => (
@@ -364,22 +412,24 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                                 ))}
                             </select>
                         </div>
+                        
                         <div className="col-span-2 md:col-span-1">
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Primary Owner (Optional)</label>
+                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Primary Owner</label>
                             <select
                                 value={formData.primaryOwnerId || ''}
                                 onChange={e => setFormData({ ...formData, primaryOwnerId: e.target.value || null })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase"
+                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase rounded-sm cursor-pointer"
                             >
                                 <option value="">-- None --</option>
                                 {users.map((u: User) => <option key={u.id} value={u.id}>{u.name}</option>)}
                             </select>
                         </div>
+                        
                         <div className="col-span-2 md:col-span-1">
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Select Assigned Users ({formData.isCollaborative ? 'Multiple' : 'Single'})</label>
-                            <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto p-2 bg-muted border border-border">
+                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Select Assigned Users</label>
+                            <div className="max-h-32 overflow-y-auto p-2 bg-muted border border-border rounded-sm custom-scrollbar">
                                 {users.map((u: User) => (
-                                    <label key={u.id} className="flex items-center gap-2 p-1 hover:bg-bg cursor-pointer transition-colors group">
+                                    <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-bg cursor-pointer transition-colors group">
                                         <input
                                             type={formData.isCollaborative ? "checkbox" : "radio"}
                                             name="assignedUser"
@@ -394,43 +444,43 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                                                     setFormData({ ...formData, assignedUserIds: [u.id] });
                                                 }
                                             }}
-                                            className="accent-accent"
+                                            className="accent-accent w-3 h-3 cursor-pointer"
                                         />
-                                        <span className="text-[10px] font-bold text-gray-400 group-hover:text-white uppercase">{u.name}</span>
+                                        <span className="text-xs font-bold text-gray-400 group-hover:text-white">{u.name}</span>
                                     </label>
                                 ))}
                             </div>
                         </div>
 
                         <div className="col-span-2">
-                            <div className="flex items-center justify-between p-4 bg-muted/50 border border-border">
-                                <div>
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-white">Collaborative Task</h4>
-                                    <p className="text-[8px] text-gray-500 uppercase mt-1">Enable to assign multiple team members to this task</p>
-                                </div>
-                                <button
-                                    onClick={() => {
-                                        const willBeCollab = !formData.isCollaborative;
-                                        setFormData({ 
-                                            ...formData, 
-                                            isCollaborative: willBeCollab, 
-                                            collaboratorIds: willBeCollab ? formData.collaboratorIds : [],
-                                            assignedUserIds: !willBeCollab && formData.assignedUserIds.length > 1 ? [formData.assignedUserIds[0]] : formData.assignedUserIds
-                                        });
-                                    }}
-                                    className={`w-12 h-6 rounded-full transition-colors relative ${formData.isCollaborative ? 'bg-accent' : 'bg-gray-700'}`}
-                                >
-                                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${formData.isCollaborative ? 'right-1' : 'left-1'}`} />
-                                </button>
-                            </div>
+                             <div className="flex items-center justify-between p-4 bg-muted border border-border rounded-sm">
+                                 <div>
+                                     <h4 className="text-[10px] font-black uppercase tracking-widest text-white mt-0">Collaborative Delivery</h4>
+                                     <p className="text-[10px] text-gray-500 font-bold tracking-wide mt-1">Allow multiple members to be assigned to this task simultaneously.</p>
+                                 </div>
+                                 <button
+                                     onClick={() => {
+                                         const willBeCollab = !formData.isCollaborative;
+                                         setFormData({ 
+                                             ...formData, 
+                                             isCollaborative: willBeCollab, 
+                                             collaboratorIds: willBeCollab ? formData.collaboratorIds : [],
+                                             assignedUserIds: !willBeCollab && formData.assignedUserIds.length > 1 ? [formData.assignedUserIds[0]] : formData.assignedUserIds
+                                         });
+                                     }}
+                                     className={`w-10 h-5 rounded-full transition-colors relative ${formData.isCollaborative ? 'bg-accent' : 'bg-gray-700'}`}
+                                 >
+                                     <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${formData.isCollaborative ? 'right-0.5' : 'left-0.5'}`} />
+                                 </button>
+                             </div>
                         </div>
 
                         {formData.isCollaborative && (
                             <div className="col-span-2">
-                                <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Select Collaborators</label>
-                                <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto p-2 bg-muted border border-border">
+                                <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Add Additional Contributors</label>
+                                <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto p-2 bg-muted border border-border rounded-sm custom-scrollbar">
                                     {users.filter((u: User) => !formData.assignedUserIds.includes(u.id)).map((u: User) => (
-                                        <label key={u.id} className="flex items-center gap-2 p-1 hover:bg-bg cursor-pointer transition-colors group">
+                                        <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-bg cursor-pointer transition-colors group">
                                             <input
                                                 type="checkbox"
                                                 checked={formData.collaboratorIds.includes(u.id)}
@@ -440,7 +490,7 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                                                         : formData.collaboratorIds.filter((id: string) => id !== u.id);
                                                     setFormData({ ...formData, collaboratorIds: ids });
                                                 }}
-                                                className="accent-accent"
+                                                className="accent-accent w-3 h-3 cursor-pointer"
                                             />
                                             <span className="text-[10px] font-bold text-gray-400 group-hover:text-white uppercase">{u.name}</span>
                                         </label>
@@ -449,114 +499,42 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                             </div>
                         )}
                         <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Start Date</label>
-                            <input
-                                type="date"
-                                value={formData.startDate}
-                                onChange={e => setFormData({ ...formData, startDate: e.target.value })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold"
-                            />
+                             <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Target Date</label>
+                             <input
+                                 type="date"
+                                 value={formData.endDate}
+                                 onChange={e => setFormData({ ...formData, endDate: e.target.value })}
+                                 className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold rounded-sm tracking-wider"
+                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">End Date (Deadline)</label>
-                            <input
-                                type="date"
-                                value={formData.endDate}
-                                onChange={e => setFormData({ ...formData, endDate: e.target.value })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Estimate (Hours)</label>
-                            <input
-                                type="number"
-                                value={formData.timeEstimate}
-                                onChange={e => setFormData({ ...formData, timeEstimate: Number(e.target.value) })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Priority</label>
-                            <select
-                                value={formData.priority}
-                                onChange={e => setFormData({ ...formData, priority: e.target.value })}
-                                className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase"
-                            >
-                                <option value={ProjectTaskPriority.LOW}>Low</option>
-                                <option value={ProjectTaskPriority.MEDIUM}>Medium</option>
-                                <option value={ProjectTaskPriority.HIGH}>High</option>
-                            </select>
+                              <div className="flex gap-4">
+                                  <div className="flex-1">
+                                    <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Est. (Hours)</label>
+                                    <input
+                                        type="number"
+                                        value={formData.timeEstimate}
+                                        onChange={e => setFormData({ ...formData, timeEstimate: Number(e.target.value) })}
+                                        className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold rounded-sm text-center"
+                                        min="0"
+                                        step="0.5"
+                                    />
+                                  </div>
+                                  <div className="flex-1">
+                                    <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Priority</label>
+                                    <select
+                                        value={formData.priority}
+                                        onChange={e => setFormData({ ...formData, priority: e.target.value })}
+                                        className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase rounded-sm cursor-pointer"
+                                    >
+                                        <option value={ProjectTaskPriority.LOW}>Low</option>
+                                        <option value={ProjectTaskPriority.MEDIUM}>Normal</option>
+                                        <option value={ProjectTaskPriority.HIGH}>Urgent</option>
+                                    </select>
+                                  </div>
+                              </div>
                         </div>
 
-                        {/* Subtasks Section */}
-                        <div className="col-span-2 border-t border-border/50 pt-6 mt-2">
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-4 font-black flex items-center gap-2">
-                                <Icons.Check /> Subtasks
-                            </label>
-                            <div className="space-y-3 mb-4">
-                                {formData.subtasks.map((st: any) => (
-                                    <div key={st.id} className="flex items-center gap-3 bg-muted/50 border border-border p-2">
-                                        <input
-                                            type="checkbox"
-                                            checked={st.isCompleted}
-                                            onChange={(e) => {
-                                                const updated = formData.subtasks.map((sub: any) => sub.id === st.id ? { ...sub, isCompleted: e.target.checked } : sub);
-                                                setFormData({ ...formData, subtasks: updated });
-                                            }}
-                                            className="accent-accent w-4 h-4 ml-2"
-                                        />
-                                        <input
-                                            type="text"
-                                            value={st.title}
-                                            onChange={(e) => {
-                                                const updated = formData.subtasks.map((sub: any) => sub.id === st.id ? { ...sub, title: e.target.value } : sub);
-                                                setFormData({ ...formData, subtasks: updated });
-                                            }}
-                                            className="flex-1 bg-transparent text-white text-xs font-bold outline-none"
-                                        />
-                                        <button
-                                            onClick={() => {
-                                                const updated = formData.subtasks.filter((sub: any) => sub.id !== st.id);
-                                                setFormData({ ...formData, subtasks: updated });
-                                            }}
-                                            className="text-gray-500 hover:text-red-500 px-2 flex items-center justify-center w-6 h-6"
-                                        >
-                                            <Icons.X />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    value={newSubtaskTitle}
-                                    onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                                    placeholder="Add a new subtask..."
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            if (newSubtaskTitle.trim()) {
-                                                setFormData({ ...formData, subtasks: [...formData.subtasks, { id: Math.random().toString(36).substr(2, 9), title: newSubtaskTitle.trim(), isCompleted: false }] });
-                                                setNewSubtaskTitle('');
-                                            }
-                                        }
-                                    }}
-                                    className="flex-1 bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold text-xs"
-                                />
-                                <button
-                                    onClick={(e) => {
-                                        e.preventDefault();
-                                        if (newSubtaskTitle.trim()) {
-                                            setFormData({ ...formData, subtasks: [...formData.subtasks, { id: Math.random().toString(36).substr(2, 9), title: newSubtaskTitle.trim(), isCompleted: false }] });
-                                            setNewSubtaskTitle('');
-                                        }
-                                    }}
-                                    className="bg-muted border border-border hover:border-accent text-gray-400 hover:text-white px-4 font-black text-[10px] uppercase tracking-widest transition-colors"
-                                >
-                                    Add
-                                </button>
-                            </div>
-                        </div>
                     </div>
                 </div>
                 <div className="p-6 border-t border-border flex justify-end gap-4 bg-muted/30">
@@ -565,7 +543,7 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                         disabled={isSubmitting}
                         onClick={async () => {
                             if (formData.assignedUserIds.length === 0) {
-                                alert("Please select at least one assigned user.");
+                                alert("Please select an assignee.");
                                 return;
                             }
                             setIsSubmitting(true);
@@ -575,269 +553,10 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                                 setIsSubmitting(false);
                             }
                         }}
-                        className="bg-accent text-black px-10 py-3 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white transition-colors disabled:opacity-50"
+                        className="bg-accent text-black px-10 py-3 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white transition-colors disabled:opacity-50 rounded-sm"
                     >
-                        {isSubmitting ? 'Saving...' : (initialData ? 'Update Task' : 'Confirm Task')}
+                        {isSubmitting ? 'Saving...' : (initialData ? 'Update Task' : 'Create Task')}
                     </button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const FolderModal = ({ isOpen, onClose, onSave, users, isAdmin }: any) => {
-    const [formData, setFormData] = useState({
-        name: '',
-        visibility: FolderVisibility.PUBLIC,
-        accessibleUserIds: [] as string[]
-    });
-
-    return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-            <div className="bg-bg border border-border w-full max-w-md flex flex-col">
-                <div className="p-6 border-b border-border flex justify-between items-center">
-                    <h3 className="text-xl font-black uppercase text-white">Create Repository</h3>
-                    <button onClick={onClose} className="text-gray-500 hover:text-white"><Icons.X /></button>
-                </div>
-                <div className="p-8 space-y-6">
-                    <div>
-                        <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Folder Name</label>
-                        <input
-                            type="text"
-                            value={formData.name}
-                            onChange={e => setFormData({ ...formData, name: e.target.value })}
-                            className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold"
-                            placeholder="PROJECT X"
-                        />
-                    </div>
-                    {isAdmin && (
-                        <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Visibility Control</label>
-                            <div className="grid grid-cols-3 gap-2">
-                                {[FolderVisibility.PUBLIC, FolderVisibility.PRIVATE, FolderVisibility.SELECTIVE].map(v => (
-                                    <button
-                                        key={v}
-                                        onClick={() => setFormData({ ...formData, visibility: v })}
-                                        className={`p-2 text-[8px] font-black uppercase tracking-tighter border ${formData.visibility === v ? 'bg-accent text-black border-accent' : 'bg-muted border-border text-gray-500'}`}
-                                    >
-                                        {v}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                    {isAdmin && formData.visibility === FolderVisibility.SELECTIVE && (
-                        <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Grant Access</label>
-                            <div className="max-h-32 overflow-y-auto border border-border bg-muted p-2 space-y-1">
-                                {users.map((u: User) => (
-                                    <label key={u.id} className="flex items-center gap-2 text-[10px] uppercase font-bold text-gray-400 p-1 hover:bg-bg cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={formData.accessibleUserIds.includes(u.id)}
-                                            onChange={e => {
-                                                const ids = e.target.checked
-                                                    ? [...formData.accessibleUserIds, u.id]
-                                                    : formData.accessibleUserIds.filter(id => id !== u.id);
-                                                setFormData({ ...formData, accessibleUserIds: ids });
-                                            }}
-                                            className="accent-accent"
-                                        />
-                                        {u.name}
-                                    </label>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-                <div className="p-6 border-t border-border flex justify-end gap-4 bg-muted/30">
-                    <button onClick={onClose} className="px-6 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white transition-colors">Cancel</button>
-                    <button
-                        onClick={() => onSave(formData)}
-                        className="bg-accent text-black px-10 py-3 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white transition-colors"
-                    >
-                        Create
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-const TaskCard = ({ task, user, users, onEdit, onRefresh }: any) => {
-    const isCompleted = task.status === ProjectTaskStatus.COMPLETED;
-    const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
-    const [showAddSubtask, setShowAddSubtask] = useState(false);
-
-    const toggleComplete = async () => {
-        const newStatus = isCompleted ? ProjectTaskStatus.IN_PROGRESS : ProjectTaskStatus.COMPLETED;
-        await storageService.saveTask({ ...task, status: newStatus });
-        onRefresh(true);
-    };
-
-    return (
-        <div className={`bg-muted border border-border p-5 group transition-all ${isCompleted ? 'border-border/30 grayscale-[0.8]' : 'hover:border-accent'}`}>
-            <div className="flex items-start gap-4">
-                <button
-                    onClick={toggleComplete}
-                    className={`mt-1 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${isCompleted ? 'bg-accent border-accent text-black' : 'border-border hover:border-accent text-transparent'}`}
-                >
-                    <Icons.Check />
-                </button>
-
-                <div className="flex-1 min-w-0">
-                    <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-4">
-                        <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-2 mb-2">
-                                <span className={`text-[7px] md:text-[8px] font-black px-2 py-0.5 uppercase tracking-widest border ${task.priority === ProjectTaskPriority.HIGH ? 'bg-red-500/10 border-red-500 text-red-500' :
-                                    task.priority === ProjectTaskPriority.MEDIUM ? 'bg-accent/10 border-accent text-accent' :
-                                        'bg-gray-500/10 border-gray-500 text-gray-500'
-                                    }`}>
-                                    {task.priority}
-                                </span>
-                                <span className="text-[7px] md:text-[8px] font-black px-2 py-0.5 uppercase tracking-widest border border-border bg-bg text-gray-400 truncate max-w-[100px]">
-                                    {task.client}
-                                </span>
-                                {task.isCollaborative && (
-                                    <span className="text-[7px] md:text-[8px] font-black px-2 py-0.5 uppercase tracking-widest border border-accent/30 bg-accent/5 text-accent flex items-center gap-1">
-                                        <Icons.Shield className="w-2 h-2" /> COLLAB
-                                    </span>
-                                )}
-                            </div>
-                            <h4 className={`text-base md:text-lg font-black uppercase leading-tight group-hover:text-accent transition-colors break-words ${isCompleted ? 'line-through text-gray-500' : ''}`}>{task.title || 'Untitled Task'}</h4>
-                            <p className="text-[11px] md:text-xs text-gray-500 mt-2 line-clamp-2 max-w-full">{task.description || 'No description provided.'}</p>
-                            {task.subtasks && task.subtasks.length > 0 && (
-                                <div className="mt-4 space-y-2">
-                                    {task.subtasks.map((sub: any) => (
-                                        <div key={sub.id} className="flex items-center gap-2 group/subtask">
-                                            <input
-                                                type="checkbox"
-                                                checked={sub.isCompleted}
-                                                onChange={async (e) => {
-                                                    const updatedSubtasks = task.subtasks.map((s: any) => s.id === sub.id ? { ...s, isCompleted: e.target.checked } : s);
-                                                    await storageService.saveTask({ ...task, subtasks: updatedSubtasks });
-                                                    onRefresh(true);
-                                                }}
-                                                className="accent-accent w-3 h-3"
-                                            />
-                                            <span className={`text-[10px] font-bold uppercase transition-colors ${sub.isCompleted ? 'text-gray-500 line-through' : 'text-gray-300'}`}>{sub.title}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {/* Inline Add Subtask */}
-                            <div className="mt-3">
-                                {showAddSubtask ? (
-                                    <div className="flex gap-2 items-center">
-                                        <input
-                                            type="text"
-                                            value={newSubtaskTitle}
-                                            onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                                            placeholder="Subtask title..."
-                                            onKeyDown={async (e) => {
-                                                if (e.key === 'Enter' && newSubtaskTitle.trim()) {
-                                                    const updatedSubtasks = [...(task.subtasks || []), { id: Math.random().toString(36).substr(2, 9), title: newSubtaskTitle.trim(), isCompleted: false }];
-                                                    setNewSubtaskTitle('');
-                                                    setShowAddSubtask(false);
-                                                    await storageService.saveTask({ ...task, subtasks: updatedSubtasks });
-                                                    onRefresh(true);
-                                                }
-                                            }}
-                                            autoFocus
-                                            className="flex-1 bg-bg border border-border p-1.5 text-white text-[10px] font-bold outline-none focus:border-accent"
-                                        />
-                                        <button 
-                                            onClick={() => { setShowAddSubtask(false); setNewSubtaskTitle(''); }}
-                                            className="text-gray-500 hover:text-white flex items-center justify-center w-4 h-4"
-                                        >
-                                            <Icons.X />
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <button
-                                        onClick={() => setShowAddSubtask(true)}
-                                        className="text-[9px] font-black uppercase text-gray-500 hover:text-accent transition-colors flex items-center gap-1 mt-1"
-                                    >
-                                        <div className="flex items-center justify-center w-3 h-3"><Icons.Plus /></div> Add Subtask
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                        <div className="w-full md:w-auto flex md:flex-col items-center md:items-end justify-between md:justify-start gap-3">
-                            <select
-                                value={task.status}
-                                onChange={(e) => {
-                                    const newStatus = e.target.value as ProjectTaskStatus;
-                                    storageService.saveTask({ ...task, status: newStatus }).then(() => onRefresh(true));
-                                }}
-                                className="bg-bg border border-border text-[9px] md:text-[10px] font-black uppercase tracking-widest p-2 outline-none focus:border-accent transition-colors flex-1 md:flex-none"
-                            >
-                                <option value={ProjectTaskStatus.NOT_STARTED}>Not Started</option>
-                                <option value={ProjectTaskStatus.IN_PROGRESS}>In Progress</option>
-                                <option value={ProjectTaskStatus.COMPLETED}>Completed</option>
-                            </select>
-                            <div className="text-[9px] md:text-[10px] font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap">
-                                {task.timeEstimate}h Est.
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pt-4 border-t border-border/50">
-                        <div className="flex items-center gap-4">
-                            <div className="flex items-center">
-                                <div className="flex -space-x-2">
-                                    {(task.assignedUserIds || []).map((aid: any) => (
-                                        <div key={aid} title={users.find((u: any) => u.id === aid)?.name} className="w-5 h-5 rounded-full bg-accent border-2 border-bg flex items-center justify-center text-[8px] font-black text-black z-10 relative">
-                                            {users.find((u: any) => u.id === aid)?.name?.charAt(0) || '?'}
-                                        </div>
-                                    ))}
-                                </div>
-                                <span className="ml-2 text-[10px] font-bold text-gray-400 uppercase truncate max-w-[120px]">
-                                    {(task.assignedUserIds || []).map((aid: any) => users.find((u: any) => u.id === aid)?.name?.split(' ')[0]).join(', ') || 'Unknown'}
-                                </span>
-                            </div>
-                            {(task.collaboratorIds || []).length > 0 && (
-                                <div className="flex -space-x-2">
-                                    {(task.collaboratorIds || []).map((cid: any) => (
-                                        <div key={cid} title={users.find((u: any) => u.id === cid)?.name} className="w-5 h-5 rounded-full bg-border border border-bg flex items-center justify-center text-[8px] font-black text-gray-400">
-                                            {users.find((u: any) => u.id === cid)?.name?.charAt(0) || '?'}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="flex items-center justify-between w-full sm:w-auto gap-4">
-                            <div className="flex items-center text-[10px] text-gray-500">
-                                <Icons.Calendar className="w-3 h-3 mr-1" />
-                                <span className="uppercase font-bold tracking-widest">
-                                    {task.endDate ? new Date(task.endDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'No Date'}
-                                </span>
-                            </div>
-                            {((task.assignedUserIds || []).includes(user.id) || task.primaryOwnerId === user.id || user.role === UserRole.ADMIN) && (
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={onEdit}
-                                        className="text-gray-500 hover:text-white transition-colors"
-                                    >
-                                        <Icons.ChevronRight />
-                                    </button>
-                                    <button
-                                        onClick={async () => {
-                                            if (window.confirm("Delete this task?")) {
-                                                await storageService.deleteTask(task.id);
-                                                onRefresh(true);
-                                            }
-                                        }}
-                                        className="text-gray-600 hover:text-red-500 transition-colors"
-                                    >
-                                        <Icons.Trash />
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -845,4 +564,3 @@ const TaskCard = ({ task, user, users, onEdit, onRefresh }: any) => {
 };
 
 export default TaskSystem;
-

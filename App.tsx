@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { AuthState, User, UserRole, DailyWorkUpdate, ProjectTask } from './types';
+import { AuthState, User, UserRole, DailyWorkUpdate, ProjectTask, TaskFolder, FolderType, FolderVisibility } from './types';
 import { storageService } from './services/storageService';
 import { generateMonthlyReport } from './services/geminiService';
 import Layout from './components/Layout';
@@ -24,6 +24,10 @@ const App: React.FC = () => {
   const [loginError, setLoginError] = useState('');
   const [isCreatingAdmin, setIsCreatingAdmin] = useState(false); // Toggle for create admin view
   const [isLoading, setIsLoading] = useState(false); // Global loading state for async operations
+  const [folders, setFolders] = useState<TaskFolder[]>([]);
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [taskView, setTaskView] = useState<'MY_TASKS' | 'FOLDER' | 'ADMIN'>('MY_TASKS');
+  const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
 
   // Initial load
   useEffect(() => {
@@ -45,6 +49,17 @@ const App: React.FC = () => {
     setUpdates(fetchedUpdates);
     setProjectTasks(fetchedTasks);
   }, []);
+
+  const refreshFolders = useCallback(async () => {
+    if (auth.isAuthenticated && auth.user) {
+      const fetchedFolders = await storageService.getFolders(auth.user.id, auth.user.role === UserRole.ADMIN);
+      setFolders(fetchedFolders || []);
+    }
+  }, [auth]);
+
+  useEffect(() => {
+    refreshFolders();
+  }, [auth.isAuthenticated, auth.user, refreshFolders]);
 
   // Handle Login
   const handleLogin = async (e: React.FormEvent) => {
@@ -359,6 +374,13 @@ const App: React.FC = () => {
       onLogout={handleLogout}
       activeTab={activeTab}
       onTabChange={setActiveTab}
+      folders={folders}
+      activeFolderId={activeFolderId}
+      onFolderSelect={(folderId, view) => {
+        setActiveFolderId(folderId);
+        setTaskView(view);
+      }}
+      onCreateFolder={() => setIsFolderModalOpen(true)}
     >
       {isNewUpdateOpen ? (
         <WorkUpdateForm
@@ -468,10 +490,114 @@ const App: React.FC = () => {
         <TaskSystem
           user={auth.user!}
           users={users}
+          folders={folders}
+          activeFolderId={activeFolderId}
+          view={taskView}
+          onRefreshFolders={refreshFolders}
         />
       ) : null}
+
+      {isFolderModalOpen && (
+        <FolderModal
+            isOpen={isFolderModalOpen}
+            onClose={() => setIsFolderModalOpen(false)}
+            onSave={async (folderData: any) => {
+                const folderId = Math.random().toString(36).substr(2, 9);
+                await storageService.saveFolder({
+                    ...folderData,
+                    id: folderId,
+                    ownerId: auth.user!.id,
+                    type: auth.user!.role === UserRole.ADMIN ? FolderType.ADMIN : FolderType.USER,
+                    createdAt: new Date().toISOString()
+                } as TaskFolder);
+                setIsFolderModalOpen(false);
+                refreshFolders();
+            }}
+            users={users}
+            isAdmin={auth.user?.role === UserRole.ADMIN}
+        />
+       )}
     </Layout>
   );
+};
+
+const FolderModal = ({ isOpen, onClose, onSave, users, isAdmin }: any) => {
+    const [formData, setFormData] = useState({
+        name: '',
+        visibility: FolderVisibility.PUBLIC,
+        accessibleUserIds: [] as string[]
+    });
+
+    return (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+            <div className="bg-bg border border-border w-full max-w-md flex flex-col">
+                <div className="p-6 border-b border-border flex justify-between items-center">
+                    <h3 className="text-xl font-black uppercase text-white">Create Repository</h3>
+                    <button onClick={onClose} className="text-gray-500 hover:text-white"><Icons.X /></button>
+                </div>
+                <div className="p-8 space-y-6">
+                    <div>
+                        <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Folder Name</label>
+                        <input
+                            type="text"
+                            value={formData.name}
+                            onChange={e => setFormData({ ...formData, name: e.target.value })}
+                            className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold"
+                            placeholder="PROJECT X"
+                        />
+                    </div>
+                    {isAdmin && (
+                        <div>
+                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Visibility Control</label>
+                            <div className="grid grid-cols-3 gap-2">
+                                {[FolderVisibility.PUBLIC, FolderVisibility.PRIVATE, FolderVisibility.SELECTIVE].map(v => (
+                                    <button
+                                        key={v}
+                                        onClick={() => setFormData({ ...formData, visibility: v })}
+                                        className={`p-2 text-[8px] font-black uppercase tracking-tighter border ${formData.visibility === v ? 'bg-accent text-black border-accent' : 'bg-muted border-border text-gray-500'}`}
+                                    >
+                                        {v}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {isAdmin && formData.visibility === FolderVisibility.SELECTIVE && (
+                        <div>
+                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Grant Access</label>
+                            <div className="max-h-32 overflow-y-auto border border-border bg-muted p-2 space-y-1">
+                                {users.map((u: User) => (
+                                    <label key={u.id} className="flex items-center gap-2 text-[10px] uppercase font-bold text-gray-400 p-1 hover:bg-bg cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={formData.accessibleUserIds.includes(u.id)}
+                                            onChange={e => {
+                                                const ids = e.target.checked
+                                                    ? [...formData.accessibleUserIds, u.id]
+                                                    : formData.accessibleUserIds.filter(id => id !== u.id);
+                                                setFormData({ ...formData, accessibleUserIds: ids });
+                                            }}
+                                            className="accent-accent"
+                                        />
+                                        {u.name}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+                <div className="p-6 border-t border-border flex justify-end gap-4 bg-muted/30">
+                    <button onClick={onClose} className="px-6 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white transition-colors">Cancel</button>
+                    <button
+                        onClick={() => onSave(formData)}
+                        className="bg-accent text-black px-10 py-3 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white transition-colors"
+                    >
+                        Create
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 export default App;

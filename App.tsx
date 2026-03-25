@@ -28,6 +28,7 @@ const App: React.FC = () => {
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
   const [taskView, setTaskView] = useState<'MY_TASKS' | 'FOLDER' | 'ADMIN'>('MY_TASKS');
   const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+  const [selectedLogDate, setSelectedLogDate] = useState<string | null>(null);
 
   // Initial load
   useEffect(() => {
@@ -376,6 +377,16 @@ const App: React.FC = () => {
       onTabChange={setActiveTab}
       folders={folders}
       activeFolderId={activeFolderId}
+      activeView={activeFolderId ? 'LIST' : (taskView === 'ADMIN' ? 'LIST' : 'MY_TASKS')}
+      onViewChange={(v) => {
+        if (v === 'MY_TASKS') {
+          setActiveFolderId(null);
+          setTaskView('MY_TASKS');
+        } else {
+          setActiveFolderId(null);
+          setTaskView(auth.user?.role === UserRole.ADMIN ? 'ADMIN' : 'MY_TASKS');
+        }
+      }}
       onFolderSelect={(folderId, view) => {
         setActiveFolderId(folderId);
         setTaskView(view);
@@ -386,7 +397,11 @@ const App: React.FC = () => {
         <WorkUpdateForm
           user={auth.user!}
           onSubmit={handleSubmitUpdate}
-          onCancel={() => setIsNewUpdateOpen(false)}
+          onCancel={() => {
+            setIsNewUpdateOpen(false);
+            setSelectedLogDate(null);
+          }}
+          initialDate={selectedLogDate || undefined}
         />
       ) : activeTab === 'dashboard' ? (
         <div className="space-y-12">
@@ -436,7 +451,10 @@ const App: React.FC = () => {
                   </div>
                 </div>
                 <button
-                  onClick={() => setIsNewUpdateOpen(true)}
+                  onClick={() => {
+                    setSelectedLogDate(null);
+                    setIsNewUpdateOpen(true);
+                  }}
                   className="bg-accent text-black px-10 py-4 text-xs font-black uppercase tracking-widest hover:bg-white transition-colors flex items-center"
                 >
                   <Icons.Plus /> <span className="ml-2">Submit Daily Update</span>
@@ -448,7 +466,17 @@ const App: React.FC = () => {
                   .filter(u => u.userId === auth.user?.id)
                   .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                   .map(log => (
-                    <div key={log.id} className="bg-muted p-6 border border-border group hover:border-accent transition-colors">
+                    <div 
+                      key={log.id} 
+                      onClick={() => {
+                        // To open a specific log, we need to set the date in WorkUpdateForm
+                        // Currently WorkUpdateForm defaults to today. 
+                        // I'll need to pass an initialDate prop to WorkUpdateForm.
+                        setSelectedLogDate(log.date);
+                        setIsNewUpdateOpen(true);
+                      }}
+                      className="bg-muted p-6 border border-border group hover:border-accent transition-colors cursor-pointer"
+                    >
                       <div className="flex justify-between items-start mb-4">
                         <div>
                           <p className="text-[10px] uppercase font-bold text-gray-500 tracking-widest">{log.date}</p>

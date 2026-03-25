@@ -15,11 +15,14 @@ interface LayoutProps {
   activeFolderId?: string | null;
   onFolderSelect?: (folderId: string | null, view: 'MY_TASKS' | 'FOLDER' | 'ADMIN') => void;
   onCreateFolder?: () => void;
+  activeView?: 'LIST' | 'MY_TASKS' | 'ADMIN';
+  onViewChange?: (view: 'LIST' | 'MY_TASKS' | 'ADMIN') => void;
 }
 
 const Layout: React.FC<LayoutProps> = ({ 
   user, onLogout, children, activeTab, onTabChange, 
-  folders = [], activeFolderId, onFolderSelect, onCreateFolder 
+  folders = [], activeFolderId, onFolderSelect, onCreateFolder,
+  activeView, onViewChange
 }) => {
   return (
     <div className="flex h-screen w-screen bg-bg text-primary overflow-hidden">
@@ -157,10 +160,28 @@ const Layout: React.FC<LayoutProps> = ({
                   activeTab === 'tasks' ? (
                      activeFolderId === 'UNASSIGNED' ? 'Unassigned Works' :
                      activeFolderId ? folders.find(f => f.id === activeFolderId)?.name || 'Folder' :
-                     'My Tasks'
+                     activeView === 'MY_TASKS' ? 'My Tasks' : 'All Tasks'
                   ) : 'Workspace'}
                </span>
             </div>
+
+            {/* View Switcher (Fix 5) */}
+            {activeTab === 'tasks' && (
+              <div className="flex bg-muted/50 p-1 rounded-sm border border-border">
+                <button
+                  onClick={() => onViewChange?.('LIST')}
+                  className={`px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-sm transition-all ${activeView === 'LIST' || activeView === 'ADMIN' ? 'bg-accent text-black' : 'text-gray-500 hover:text-white'}`}
+                >
+                  List View
+                </button>
+                <button
+                  onClick={() => onViewChange?.('MY_TASKS')}
+                  className={`px-3 py-1 text-[10px] font-black uppercase tracking-widest rounded-sm transition-all ${activeView === 'MY_TASKS' ? 'bg-accent text-black' : 'text-gray-500 hover:text-white'}`}
+                >
+                  My Tasks
+                </button>
+              </div>
+            )}
             <div className="flex items-center gap-4">
               <div className="bg-muted border border-border px-3 py-1.5 rounded flex items-center gap-2 text-gray-500 w-64 opacity-50 hover:opacity-100 cursor-not-allowed transition-opacity">
                 <Icons.Search className="w-3 h-3" />

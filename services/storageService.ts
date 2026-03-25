@@ -50,18 +50,7 @@ export const storageService = {
   },
 
   saveUpdate: async (update: DailyWorkUpdate): Promise<boolean> => {
-    // Check if user already submitted for this date
-    const { data: existing } = await supabase
-      .from('daily_updates')
-      .select('id')
-      .eq('userId', update.userId)
-      .eq('date', update.date);
-
-    if (existing && existing.length > 0) {
-      return false;
-    }
-
-    const { error } = await supabase.from('daily_updates').insert(update);
+    const { error } = await supabase.from('daily_updates').upsert(update);
     if (error) {
       console.error('Error saving update:', error);
       throw error;
@@ -77,6 +66,20 @@ export const storageService = {
   getUpdatesByMonth: async (month: string): Promise<DailyWorkUpdate[]> => {
     const { data } = await supabase.from('daily_updates').select('*').eq('month', month);
     return data || [];
+  },
+
+  getUpdateByDate: async (userId: string, date: string): Promise<DailyWorkUpdate | null> => {
+    const { data, error } = await supabase
+      .from('daily_updates')
+      .select('*')
+      .eq('userId', userId)
+      .eq('date', date)
+      .maybeSingle(); // Use maybeSingle to avoid errors if no match
+    if (error) {
+      console.error('Error fetching update by date:', error);
+      return null;
+    }
+    return data;
   },
 
   // Project Task Management

@@ -2,32 +2,54 @@ import React, { useState, useEffect } from 'react';
 import { Icons, CATEGORY_LABELS } from '../constants';
 import { Task, MissedTask, Blocker, TaskCategory, DailyWorkUpdate, User, ProjectTask, ProjectTaskStatus } from '../types';
 import { storageService } from '../services/storageService';
+import { parseTimeInput, formatTimeDisplay, toDecimalHours } from '../services/timeUtils';
 
 interface WorkUpdateFormProps {
   user: User;
   onSubmit: (update: DailyWorkUpdate) => Promise<void>;
   onCancel: () => void;
+  initialDate?: string;
 }
 
 interface TaskForm extends Task {
-  hours: number;
-  minutes: number;
+  timeInput: string;
   isMissed?: boolean;
   missedReason?: string;
 }
 
-const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCancel }) => {
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCancel, initialDate }) => {
+  const [date, setDate] = useState(initialDate || new Date().toISOString().split('T')[0]);
   const [tasks, setTasks] = useState<TaskForm[]>([]);
   const [missedTasks, setMissedTasks] = useState<MissedTask[]>([]);
   const [blockers, setBlockers] = useState<Blocker[]>([]);
   const [productivityScore, setProductivityScore] = useState(5);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
+  const [existingUpdate, setExistingUpdate] = useState<DailyWorkUpdate | null>(null);
+  const [isReadOnly, setIsReadOnly] = useState(false);
 
   useEffect(() => {
     storageService.getTasksByUser(user.id).then(setProjectTasks);
-  }, [user.id]);
+    checkExistingUpdate();
+  }, [user.id, date]);
+
+  const checkExistingUpdate = async () => {
+    const update = await storageService.getUpdateByDate(user.id, date);
+    setExistingUpdate(update);
+    if (update) {
+      // If it exists, populate the form and set read-only if not today
+      setTasks(update.tasks.map(t => ({ ...t, timeInput: formatTimeDisplay(t.timeSpent * 60) } as TaskForm)));
+      setMissedTasks(update.missedTasks);
+      setBlockers(update.blockers);
+      setProductivityScore(update.productivityScore);
+      setIsReadOnly(date !== new Date().toISOString().split('T')[0] && user.role !== 'ADMIN');
+    } else {
+      setIsReadOnly(false);
+      // Don't reset everything if user is just switching dates to check, 
+      // but maybe we should reset to defaults if no update exists?
+      // Actually, the current logic for generating scheduled tasks is in an effect below.
+    }
+  };
 
   useEffect(() => {
     if (!projectTasks.length) return;
@@ -39,6 +61,9 @@ const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCance
     );
     
     setTasks(prev => {
+       // If we have an existing update, don't auto-generate from project tasks
+       if (existingUpdate) return prev;
+
        const manual = prev.filter(t => !t.isScheduled);
        const newScheduled = scheduled.map(pt => {
            const existing = prev.find(p => p.projectTaskId === pt.id && p.isScheduled);
@@ -48,8 +73,7 @@ const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCance
                id: Math.random().toString(36).substr(2, 9),
                description: `[${pt.client}] ${pt.title}`,
                timeSpent: 0,
-               hours: 0,
-               minutes: 0,
+               timeInput: '',
                category: TaskCategory.HPA,
                projectTaskId: pt.id,
                isScheduled: true,
@@ -81,8 +105,7 @@ const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCance
       id: Math.random().toString(36).substr(2, 9),
       description: '',
       timeSpent: 0,
-      hours: 0,
-      minutes: 0,
+      timeInput: '',
       category: TaskCategory.HPA,
       projectTaskId: '',
       isScheduled: false
@@ -90,25 +113,23 @@ const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCance
   };
 
   const updateTask = (id: string, field: keyof TaskForm, value: any) => {
+    if (isReadOnly) return;
     setTasks(tasks.map(t => {
       if (t.id !== id) return t;
 
       const updatedTask = { ...t, [field]: value };
 
-      if (field === 'hours' || field === 'minutes') {
-        const h = field === 'hours' ? Number(value) : t.hours;
-        const m = field === 'minutes' ? Number(value) : t.minutes;
-        const timeSpent = h + (m / 60);
-        updatedTask.timeSpent = timeSpent;
+      if (field === 'timeInput') {
+        const totalMinutes = parseTimeInput(value);
+        updatedTask.timeSpent = toDecimalHours(totalMinutes);
         
         if (updatedTask.isScheduled && updatedTask.estimatedTimeAtLogDate !== undefined) {
-             updatedTask.variance = timeSpent - updatedTask.estimatedTimeAtLogDate;
+             updatedTask.variance = updatedTask.timeSpent - updatedTask.estimatedTimeAtLogDate;
         }
       }
 
       if (field === 'isMissed' && value === true) {
-        updatedTask.hours = 0;
-        updatedTask.minutes = 0;
+        updatedTask.timeInput = '';
         updatedTask.timeSpent = 0;
       }
 
@@ -137,7 +158,7 @@ const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCance
     const finalTasks: Task[] = [];
     const finalMissed = [...missedTasks];
     
-    tasks.forEach(({ hours, minutes, isMissed, missedReason, ...t }) => {
+    tasks.forEach(({ timeInput, isMissed, missedReason, ...t }) => {
         if (isMissed) {
              finalMissed.push({
                   id: Math.random().toString(36).substr(2, 9),
@@ -266,15 +287,12 @@ const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCance
                                                 </div>
                                                 <div className="flex items-center gap-1 justify-center">
                                                     <input
-                                                        type="number" min="0" placeholder="H"
-                                                        value={task.hours || ''} onChange={(e) => updateTask(task.id, 'hours', parseInt(e.target.value) || 0)}
-                                                        className="w-10 bg-bg border border-border p-1.5 text-center text-xs font-bold outline-none focus:border-accent appearance-none rounded-sm"
-                                                    />
-                                                    <span className="text-gray-600 font-bold">:</span>
-                                                    <input
-                                                        type="number" min="0" max="59" placeholder="M"
-                                                        value={task.minutes || ''} onChange={(e) => updateTask(task.id, 'minutes', parseInt(e.target.value) || 0)}
-                                                        className="w-10 bg-bg border border-border p-1.5 text-center text-xs font-bold outline-none focus:border-accent appearance-none rounded-sm"
+                                                        type="text"
+                                                        placeholder="e.g. 1.5h, 30m"
+                                                        value={task.timeInput}
+                                                        onChange={(e) => updateTask(task.id, 'timeInput', e.target.value)}
+                                                        disabled={isReadOnly}
+                                                        className="w-24 bg-bg border border-border p-1.5 text-center text-xs font-bold outline-none focus:border-accent rounded-sm uppercase tracking-tighter"
                                                     />
                                                 </div>
                                                 <div>
@@ -361,16 +379,12 @@ const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCance
                                         </div>
                                         <div className="flex items-center gap-1 justify-center">
                                             <input
-                                                type="number" min="0" placeholder="H"
-                                                value={task.hours || ''} onChange={(e) => updateTask(task.id, 'hours', parseInt(e.target.value) || 0)}
-                                                className="w-10 bg-muted border border-border p-1.5 text-center text-xs font-bold outline-none focus:border-accent appearance-none rounded-sm"
-                                                required
-                                            />
-                                            <span className="text-gray-600 font-bold">:</span>
-                                            <input
-                                                type="number" min="0" max="59" placeholder="M"
-                                                value={task.minutes || ''} onChange={(e) => updateTask(task.id, 'minutes', parseInt(e.target.value) || 0)}
-                                                className="w-10 bg-muted border border-border p-1.5 text-center text-xs font-bold outline-none focus:border-accent appearance-none rounded-sm"
+                                                type="text"
+                                                placeholder="e.g. 1h 20m"
+                                                value={task.timeInput}
+                                                onChange={(e) => updateTask(task.id, 'timeInput', e.target.value)}
+                                                disabled={isReadOnly}
+                                                className="w-24 bg-muted border border-border p-1.5 text-center text-xs font-bold outline-none focus:border-accent rounded-sm uppercase tracking-tighter"
                                                 required
                                             />
                                         </div>
@@ -501,11 +515,22 @@ const WorkUpdateForm: React.FC<WorkUpdateFormProps> = ({ user, onSubmit, onCance
                 {/* Submit button */}
                 <div className="flex gap-4 w-full md:w-auto mt-4 md:mt-0">
                     <button type="button" onClick={onCancel} className="flex-1 md:flex-none px-6 py-3 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white transition-colors bg-bg border border-border rounded-sm">
-                        Cancel
+                        Close
                     </button>
-                    <button type="submit" disabled={isSubmitting} className="flex-1 md:flex-none bg-accent text-black px-10 py-3 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white transition-colors disabled:opacity-50 rounded-sm">
-                        {isSubmitting ? 'Submitting...' : 'Submit Log'}
-                    </button>
+                    {!isReadOnly && (
+                        <button 
+                            type="submit" 
+                            disabled={isSubmitting || (!!existingUpdate && date !== new Date().toISOString().split('T')[0])} 
+                            className="flex-1 md:flex-none bg-accent text-black px-10 py-3 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-white transition-colors disabled:opacity-50 rounded-sm"
+                        >
+                            {isSubmitting ? 'Submitting...' : existingUpdate ? 'Update Log' : 'Submit Log'}
+                        </button>
+                    )}
+                    {isReadOnly && (
+                        <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 bg-muted px-4 py-3 border border-border">
+                           LOCKED / VIEW ONLY
+                        </div>
+                    )}
                 </div>
             </footer>
         </form>

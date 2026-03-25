@@ -66,6 +66,7 @@ const TaskSystem: React.FC<TaskSystemProps> = ({ user, users, folders = [], acti
 
     const activeTasks = filteredTasks.filter(t => t.status !== ProjectTaskStatus.COMPLETED);
     const completedTasks = filteredTasks.filter(t => t.status === ProjectTaskStatus.COMPLETED);
+    const [isCompletedCollapsed, setIsCompletedCollapsed] = useState(true);
 
     return (
         <div className="flex-1 flex flex-col h-full overflow-hidden bg-bg">
@@ -124,10 +125,16 @@ const TaskSystem: React.FC<TaskSystemProps> = ({ user, users, folders = [], acti
 
                         {completedTasks.length > 0 && (
                             <div className="mt-8">
-                                <div className="px-6 py-3 bg-muted/20 border-y border-border flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-gray-500">
-                                    <Icons.Check className="w-3 h-3" /> Completed Tasks ({completedTasks.length})
+                                <div 
+                                    className="px-6 py-3 bg-muted/20 border-y border-border flex items-center justify-between cursor-pointer group hover:bg-muted/30 transition-colors"
+                                    onClick={() => setIsCompletedCollapsed(!isCompletedCollapsed)}
+                                >
+                                    <div className="flex items-center gap-2 text-[10px] uppercase font-black tracking-widest text-gray-500">
+                                        <Icons.Check className="w-3 h-3" /> Completed Tasks ({completedTasks.length})
+                                    </div>
+                                    <Icons.ChevronDown className={`w-3 h-3 text-gray-500 transition-transform ${isCompletedCollapsed ? '' : 'rotate-180'}`} />
                                 </div>
-                                {completedTasks.map(task => (
+                                {!isCompletedCollapsed && completedTasks.map(task => (
                                     <TaskRow
                                         key={task.id}
                                         task={task}
@@ -195,8 +202,27 @@ const TaskRow = ({ task, user, users, onEdit, onRefresh, expanded, onToggleExpan
                     </button>
                     <div className="flex-1 min-w-0 flex flex-col">
                         <span className={`text-sm font-bold truncate transition-colors ${isCompleted ? 'line-through text-gray-500' : 'text-white group-hover:text-accent'}`}>{task.title || 'Untitled'}</span>
-                        {task.client && (
-                             <span className="text-[9px] uppercase tracking-widest text-gray-500 font-bold truncate">{task.client}</span>
+                        <div className="flex items-center gap-2 mt-0.5">
+                            {task.client && (
+                                <span className="text-[9px] uppercase tracking-widest text-gray-500 font-bold truncate">{task.client}</span>
+                            )}
+                            {task.startDate && (
+                                <span className="text-[8px] uppercase tracking-[0.1em] text-accent/60 font-black">Starts: {new Date(task.startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                            )}
+                        </div>
+                        {/* Subtask Preview (Fix 6) */}
+                        {!expanded && task.subtasks && task.subtasks.length > 0 && (
+                            <div className="mt-2 pl-4 border-l border-border/50 space-y-1">
+                                {task.subtasks.slice(0, 2).map((sub: any) => (
+                                    <div key={sub.id} className="flex items-center gap-2 opacity-60">
+                                        <div className={`w-2 h-2 rounded-full border border-gray-600 ${sub.isCompleted ? 'bg-accent border-accent' : ''}`} />
+                                        <span className={`text-[9px] font-bold ${sub.isCompleted ? 'line-through' : ''}`}>{sub.title}</span>
+                                    </div>
+                                ))}
+                                {task.subtasks.length > 2 && (
+                                    <span className="text-[8px] font-black text-gray-600 uppercase tracking-widest">+{task.subtasks.length - 2} more</span>
+                                )}
+                            </div>
                         )}
                     </div>
                 </div>
@@ -236,9 +262,14 @@ const TaskRow = ({ task, user, users, onEdit, onRefresh, expanded, onToggleExpan
                 </div>
 
                 {/* Due Date */}
-                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1">
-                    <Icons.Calendar className="w-3 h-3 text-gray-600" />
-                    {task.endDate ? new Date(task.endDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '-'}
+                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex flex-col gap-0.5">
+                    <div className="flex items-center gap-1">
+                        <Icons.Calendar className="w-3 h-3 text-gray-600" />
+                        {task.endDate ? new Date(task.endDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '-'}
+                    </div>
+                    {task.startDate && (
+                         <span className="text-[8px] text-accent/40 font-black pl-4">FROM {new Date(task.startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                    )}
                 </div>
 
                 {/* Priority */}
@@ -390,13 +421,13 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Client / Project Code</label>
+                            <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Client (Optional)</label>
                             <input
                                 type="text"
                                 value={formData.client}
                                 onChange={e => setFormData({ ...formData, client: e.target.value })}
                                 className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold uppercase rounded-sm"
-                                placeholder="INT-001"
+                                placeholder="E.g. INT-001"
                             />
                         </div>
                         <div>
@@ -499,7 +530,16 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                             </div>
                         )}
                         <div>
-                             <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Target Date</label>
+                             <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Start Date</label>
+                             <input
+                                 type="date"
+                                 value={formData.startDate}
+                                 onChange={e => setFormData({ ...formData, startDate: e.target.value })}
+                                 className="w-full bg-muted border border-border p-3 text-white outline-none focus:border-accent font-bold rounded-sm tracking-wider"
+                             />
+                        </div>
+                        <div>
+                             <label className="block text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-black">Due Date</label>
                              <input
                                  type="date"
                                  value={formData.endDate}
@@ -542,13 +582,18 @@ const TaskModal = ({ isOpen, onClose, onSave, users, currentUserId, initialData,
                     <button
                         disabled={isSubmitting}
                         onClick={async () => {
-                            if (formData.assignedUserIds.length === 0) {
-                                alert("Please select an assignee.");
+                            if (!formData.title) {
+                                alert("Please enter a task title.");
                                 return;
                             }
+                            // Assignees are NO LONGER REQUIRED to be manually selected if they default to current user
+                            const finalData = {
+                                ...formData,
+                                assignedUserIds: formData.assignedUserIds.length > 0 ? formData.assignedUserIds : [currentUserId]
+                            };
                             setIsSubmitting(true);
                             try {
-                                await onSave(formData);
+                                await onSave(finalData);
                             } finally {
                                 setIsSubmitting(false);
                             }
